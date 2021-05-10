@@ -16,6 +16,7 @@ def get_pipe():
 
 # =============================================================
 
+# Need to fix finding corners on unaligned frame
 def find_corners():
     # Configure depth and color streams
     pipe = get_pipe()
@@ -165,19 +166,6 @@ def find_corners():
                 # Create list of points (future use for point cloud processing?)
                 list_pcd.append(depth_point)
 
-    """
-    # Configure 3d plot window
-    fig = plt.figure()
-    ax = fig.add_subplot(111, projection='3d')
-    ax.set_xlabel('x')
-    ax.set_ylabel('y')
-    ax.set_zlabel('z')
-
-    # Plot Points
-    ax.scatter(1000*list_x, 1000*list_y, 1000*list_z, c='red')
-    plt.show() 
-    """
-
     # Convert m to mm
     for pt in list_pcd:
         pt[0] = 1000*pt[0]
@@ -212,6 +200,8 @@ def find_corners_selmask():
     config = rs.config()
     config.enable_stream(rs.stream.depth, 640, 480, rs.format.z16, 30)
     config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 30)
+
+    depthFilter = 0.15
 
     # Start streaming
     profile = pipe.start(config)
@@ -285,7 +275,7 @@ def find_corners_selmask():
                 color_image = np.asanyarray(aligned_color_frame.get_data())
 
                 ### Do corner detection first ###
-                color_image = np.asanyarray(color_frame.get_data())
+                color_image = np.asanyarray(aligned_color_frame.get_data())
                 roi = color_image[iy:jy, ix:jx]
                 mask = np.zeros((480,640), dtype=np.uint8)
                 mask[iy:jy, ix:jx] = 255
@@ -305,14 +295,20 @@ def find_corners_selmask():
                 # Move detected corners back to full image location and draw
                 for i in corners:
                     x, y = i.ravel()
-                    depth = depth_frame.get_distance(x,y)
+                    depth = aligned_depth_frame.get_distance(x,y)
 
                     # Draw corner points in color image
-                    cv2.circle(color_image, (x,y), 3, (255,0,0), -1)
-                    color_point = np.asanyarray(i)
+                    if depth == 0 or depth > depthFilter:
+                        cv2.circle(color_image, (x,y), 3, (0,0,255), -1)
+                    else:
+                        cv2.circle(color_image, (x,y), 3, (255,0,0), -1)
+                        
 
                     # Draw corner points in depth image
-                    cv2.circle(depth_image, (x,y), 3, (255,0,0), -1)
+                    if depth == 0 or depth > depthFilter:
+                        cv2.circle(depth_image, (x,y), 3, (0,0,255), -1)
+                    else:
+                        cv2.circle(depth_image, (x,y), 3, (255,0,0), -1)
                     #color_point_depth 
 
                 # Show image
@@ -330,10 +326,121 @@ def find_corners_selmask():
                     maskLoop = False
                     cv2.destroyWindow('RealSense')
 
-            
+            list_x = []
+            list_y = []
+            list_z = []
+            list_pcd = []
+            cornersList = []
+            for i in corners:
+                x, y = i.ravel()
+                depth = aligned_depth_frame.get_distance(x,y)
+
+                # Project color pixel to depth image and return depth image pixel
+                depth_px = rs.rs2_project_color_pixel_to_depth_pixel(
+                    aligned_depth_frame.get_data(),
+                    depth_scale,
+                    depth_min=0.0,
+                    depth_max=5.0,
+                    depth_intrin=depth_intrin,
+                    color_intrin=color_intrin,
+                    depth_to_color=depth_to_color_extrin,
+                    color_to_depth=color_to_depth_extrin,
+                    from_pixel=[x,y]
+                )
+
+                xd = int(x)
+                yd = int(y)
+                cornersList.append([xd,yd])
+
+                # Some depth image pixels are out of range, run only for postive, non-zero values
+                if xd > 0:
+                    ddist = aligned_depth_frame.get_distance(xd, yd)
+
+                    pts = [xd-1,yd, xd+1,yd, xd,yd-1, xd,yd+1]
+                    nearDist = []
+                    for i in range(4):
+                        dist = aligned_depth_frame.get_distance(pts[2*i], pts[2*i+1])
+                        if dist > 0 and dist < 1:
+                            nearDist.append(dist)
+
+                    # Search four closest points if ddist = 0
+                    if ddist == 0.0:
+                        
+                        if len(nearDist) > 0:
+
+                            # Find points more than 10mm deeper than min and throw away
+                            if len(nearDist) > 1:
+                                diff = max(nearDist) - min(nearDist)
+                                if diff > 0.1:
+                                    realVal = min(nearDist)
+                                    for i in range(len(nearDist)):
+                                        ptDiff = nearDist[i] - min(nearDist)
+                                        if ptDiff > 0.1:
+                                            nearDist.remove(i)
+
+                            newDdist = sum(nearDist)/len(nearDist)
+
+                            if newDdist > 0 and newDdist < depthFilter:
+                                depth_point = rs.rs2_deproject_pixel_to_point(depth_intrin, [xd, yd], newDdist)
+
+                                # Add coordinates to list
+                                list_x.append(depth_point[0])
+                                list_y.append(depth_point[1])
+                                list_z.append(depth_point[2])
+
+                                # Create list of points (future use for point cloud processing?)
+                                list_pcd.append(depth_point)
+                        
+
+                    if ddist > 0 and ddist < depthFilter:
+                        depth_point = rs.rs2_deproject_pixel_to_point(depth_intrin, [xd, yd], ddist)
+
+                        # Add coordinates to list
+                        list_x.append(depth_point[0])
+                        list_y.append(depth_point[1])
+                        list_z.append(depth_point[2])
+
+                        # Create list of points (future use for point cloud processing?)
+                        list_pcd.append(depth_point)
+            # Convert m to mm
+            for pt in list_pcd:
+                pt[0] = 1000*pt[0]
+                pt[1] = 1000*pt[1]
+                pt[2] = 1000*pt[2]
+
+            #print(cornersList)
+            if len(cornersList) > 0:
+                xAvg = sum(i[0] for i in cornersList)/len(cornersList)
+            else:
+                xAvg = 0
+
+            for i in corners:
+                x, y = i.ravel()
+                depth = aligned_depth_frame.get_distance(x,y)
+
+                # Draw corner points in color image
+                if depth > depthFilter:
+                    cv2.circle(color_image, (x,y), 3, (0,0,255), -1)
+                else:
+                    cv2.circle(color_image, (x,y), 3, (255,0,0), -1)
+
+
+                # Draw corner points in depth image
+                if depth > depthFilter:
+                    cv2.circle(depth_image, (x,y), 3, (0,0,255), -1)
+                else:
+                    cv2.circle(depth_image, (x,y), 3, (255,0,0), -1)
+
+                depthText = "{:.1f}".format(1000*depth)
+                if x > xAvg:
+                    cv2.putText(depth_image, depthText, (int((x+10)),int(y+3)), cv2.FONT_HERSHEY_SIMPLEX, .35, (255,255,255), 1, cv2.LINE_AA)
+                else:
+                    cv2.putText(depth_image, depthText, (int((x-45)),int(y+3)), cv2.FONT_HERSHEY_SIMPLEX, .35, (255,255,255), 1, cv2.LINE_AA)
+
+
             cv2.namedWindow('ConfirmImage', cv2.WINDOW_AUTOSIZE)
-            cv2.imshow('ConfirmImage', both)
-            #cv2.imshow('ConfirmImage', color_image)
+            final = np.hstack((color_image, depth_image))
+            cv2.imshow('ConfirmImage', final)
             if cv2.waitKey(0) == 27:
                 windowClose = False
                 cv2.destroyWindow('ConfirmImage')
@@ -344,112 +451,6 @@ def find_corners_selmask():
 
         # Cleanup
         pipe.stop()
-    
-    
-    list_x = []
-    list_y = []
-    list_z = []
-    list_pcd = []
-    for i in corners:
-        x, y = i.ravel()
-        depth = aligned_depth_frame.get_distance(x,y)
-
-        # Project color pixel to depth image and return depth image pixel
-        depth_px = rs.rs2_project_color_pixel_to_depth_pixel(
-            aligned_depth_frame.get_data(),
-            depth_scale,
-            depth_min=0.0,
-            depth_max=5.0,
-            depth_intrin=depth_intrin,
-            color_intrin=color_intrin,
-            depth_to_color=depth_to_color_extrin,
-            color_to_depth=color_to_depth_extrin,
-            from_pixel=[x,y]
-        )
-
-        xd = int(x)
-        yd = int(y)
-
-        # Some depth image pixels are out of range, run only for postive, non-zero values
-        if xd > 0:
-            ddist = aligned_depth_frame.get_distance(xd, yd)
-            #print("at ", xd, ",", yd, " depth is ", ddist)
-
-            pts = [xd-1,yd, xd+1,yd, xd,yd-1, xd,yd+1]
-            nearDist = []
-            for i in range(4):
-                dist = aligned_depth_frame.get_distance(pts[2*i], pts[2*i+1])
-                #print("Neighbor point search: ", dist)
-                if dist > 0 and dist < 1:
-                    #print("Neighbor point found: ", dist)
-                    nearDist.append(dist)
-
-            # Search four closest points if ddist = 0
-            if ddist == 0.0:
-                """
-                pts = [xd-1,yd, xd+1,yd, xd,yd-1, xd,yd+1]
-                nearDist = []
-                for i in range(4):
-                    dist = depth_frame.get_distance(pts[2*i], pts[2*i+1])
-                    print("Neighbor point search: ", dist)
-                    if dist > 0 and dist < 1:
-                        print("Neighbor point found: ", dist)
-                        nearDist.append(dist)
-                """
-                
-                if len(nearDist) > 0:
-
-                    # Find points more than 10mm deeper than min and throw away
-                    if len(nearDist) > 1:
-                        diff = max(nearDist) - min(nearDist)
-                        if diff > 0.1:
-                            realVal = min(nearDist)
-                            for i in range(len(nearDist)):
-                                ptDiff = nearDist[i] - min(nearDist)
-                                if ptDiff > 0.1:
-                                    nearDist.remove(i)
-
-                    newDdist = sum(nearDist)/len(nearDist)
-                    depth_point = rs.rs2_deproject_pixel_to_point(depth_intrin, [xd, yd], newDdist)
-
-                    # Add coordinates to list
-                    list_x.append(depth_point[0])
-                    list_y.append(depth_point[1])
-                    list_z.append(depth_point[2])
-
-                    # Create list of points (future use for point cloud processing?)
-                    list_pcd.append(depth_point)
-                
-
-            if ddist > 0 and ddist < 1:
-                depth_point = rs.rs2_deproject_pixel_to_point(depth_intrin, [xd, yd], ddist)
-
-                # Add coordinates to list
-                list_x.append(depth_point[0])
-                list_y.append(depth_point[1])
-                list_z.append(depth_point[2])
-
-                # Create list of points (future use for point cloud processing?)
-                list_pcd.append(depth_point)
-
-    """
-    # Configure 3d plot window
-    fig = plt.figure()
-    ax = fig.add_subplot(111, projection='3d')
-    ax.set_xlabel('x')
-    ax.set_ylabel('y')
-    ax.set_zlabel('z')
-
-    # Plot Points
-    ax.scatter(1000*list_x, 1000*list_y, 1000*list_z, c='red')
-    plt.show() 
-    """
-
-    # Convert m to mm
-    for pt in list_pcd:
-        pt[0] = 1000*pt[0]
-        pt[1] = 1000*pt[1]
-        pt[2] = 1000*pt[2]
 
     # Find best fit plane through points
     bestPlane = Plane.best_fit(list_pcd)

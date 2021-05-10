@@ -373,15 +373,15 @@ def find_corners_selmask():
         # Some depth image pixels are out of range, run only for postive, non-zero values
         if xd > 0:
             ddist = aligned_depth_frame.get_distance(xd, yd)
-            print("at ", xd, ",", yd, " depth is ", ddist)
+            #print("at ", xd, ",", yd, " depth is ", ddist)
 
             pts = [xd-1,yd, xd+1,yd, xd,yd-1, xd,yd+1]
             nearDist = []
             for i in range(4):
                 dist = aligned_depth_frame.get_distance(pts[2*i], pts[2*i+1])
-                print("Neighbor point search: ", dist)
+                #print("Neighbor point search: ", dist)
                 if dist > 0 and dist < 1:
-                    print("Neighbor point found: ", dist)
+                    #print("Neighbor point found: ", dist)
                     nearDist.append(dist)
 
             # Search four closest points if ddist = 0

@@ -220,6 +220,16 @@ def find_corners_selmask():
     for x in range(20):
         pipe.wait_for_frames()
 
+    # Get depth sensor's depth scale, intrinsic, and extrinsic profiles
+    depth_sensor = profile.get_device().first_depth_sensor()
+    depth_scale = depth_sensor.get_depth_scale()
+
+    depth_intrin = profile.get_stream(rs.stream.depth).as_video_stream_profile().get_intrinsics()
+    color_intrin = profile.get_stream(rs.stream.color).as_video_stream_profile().get_intrinsics()
+
+    depth_to_color_extrin = profile.get_stream(rs.stream.depth).as_video_stream_profile().get_extrinsics_to(profile.get_stream(rs.stream.color))
+    color_to_depth_extrin = profile.get_stream(rs.stream.color).as_video_stream_profile().get_extrinsics_to(profile.get_stream(rs.stream.depth))
+
     # Define selection mask drawing function
     def draw_rectangle_with_drag(event, x, y, flags, param):
       
@@ -234,23 +244,18 @@ def find_corners_selmask():
                 
         elif event == cv2.EVENT_MOUSEMOVE:
             if drawing == True:
-                cv2.line(color_image, (ix,iy), (x,iy), (255,0,0), 3)
-                cv2.line(color_image, (ix,iy), (ix,y), (255,0,0), 3)
-                cv2.imshow('RealSense', color_image)
+                cv2.line(both, (ix,iy), (x,iy), (255,0,0), 3)
+                cv2.line(both, (ix,iy), (ix,y), (255,0,0), 3)
+                cv2.imshow('RealSense', both)
         
         elif event == cv2.EVENT_LBUTTONUP:
             drawing = False
-            cv2.rectangle(color_image, pt1 =(ix, iy),
-                        pt2 =(x, y),
-                        color =(0, 0, 255),
-                        thickness  = 2)
+            cv2.rectangle(both, pt1 = (ix, iy), pt2 = (x, y), color = (0,0,255), thickness  = 2)
+            cv2.rectangle(both, pt1 = (ix+640,iy), pt2 = (x+640, y), color =(0,0,255), thickness = 2)
             jx = x
             jy = y
-            cv2.imshow('RealSense', color_image)
+            cv2.imshow('RealSense', both)
             cv2.waitKey(10)
-    
-    
-    
 
     corners = []
     windowClose = False
@@ -260,6 +265,7 @@ def find_corners_selmask():
             cv2.namedWindow('RealSense', cv2.WINDOW_AUTOSIZE)
             cv2.setMouseCallback('RealSense', draw_rectangle_with_drag)
             global color_image
+            global both
 
             while maskLoop == True:
                 #print("in mask loop")
@@ -268,7 +274,17 @@ def find_corners_selmask():
                 color_frame = frameset.get_color_frame()
                 depth_frame = frameset.get_depth_frame()
 
-                ### Do corner detection on unaligned image first ###
+                # Align the streams
+                align = rs.align(rs.stream.color)
+                frameset = align.process(frameset)
+
+                aligned_depth_frame = frameset.get_depth_frame()
+                depth_image = np.asanyarray(aligned_depth_frame.get_data())
+
+                aligned_color_frame = frameset.get_color_frame()
+                color_image = np.asanyarray(aligned_color_frame.get_data())
+
+                ### Do corner detection first ###
                 color_image = np.asanyarray(color_frame.get_data())
                 roi = color_image[iy:jy, ix:jx]
                 mask = np.zeros((480,640), dtype=np.uint8)
@@ -277,6 +293,13 @@ def find_corners_selmask():
                 corners = cv2.goodFeaturesToTrack(gray, 4, 0.01, 2, mask=mask)
                 color_image = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
                 color_image[iy:jy, ix:jx] = roi
+
+                colorizer = rs.colorizer()
+                depth_image = np.asanyarray(colorizer.colorize(aligned_depth_frame).get_data())
+                roi_depth = depth_image[iy:jy, ix:jx]
+                gray_depth = cv2.cvtColor(depth_image, cv2.COLOR_BGR2GRAY)
+                depth_image = cv2.cvtColor(gray_depth, cv2.COLOR_GRAY2BGR)
+                depth_image[iy:jy, ix:jx] = roi_depth
 
 
                 # Move detected corners back to full image location and draw
@@ -288,16 +311,29 @@ def find_corners_selmask():
                     cv2.circle(color_image, (x,y), 3, (255,0,0), -1)
                     color_point = np.asanyarray(i)
 
+                    # Draw corner points in depth image
+                    cv2.circle(depth_image, (x,y), 3, (255,0,0), -1)
+                    #color_point_depth 
+
                 # Show image
-                cv2.imshow('RealSense', color_image)
-                cv2.waitKey(10)
+                both = np.hstack((color_image, depth_image))
+                cv2.imshow('RealSense', both)    
+                #cv2.imshow('RealSense', color_image)               
+                k = cv2.waitKey(10)
 
                 # Exit loop if window is closed
                 if cv2.getWindowProperty('RealSense', 0) == -1:
                     maskLoop = False
+
+                # Exit loop if spacebar is pressed
+                if k == 32 or k == 13:
+                    maskLoop = False
+                    cv2.destroyWindow('RealSense')
+
             
             cv2.namedWindow('ConfirmImage', cv2.WINDOW_AUTOSIZE)
-            cv2.imshow('ConfirmImage', color_image)
+            cv2.imshow('ConfirmImage', both)
+            #cv2.imshow('ConfirmImage', color_image)
             if cv2.waitKey(0) == 27:
                 windowClose = False
                 cv2.destroyWindow('ConfirmImage')
@@ -308,33 +344,7 @@ def find_corners_selmask():
 
         # Cleanup
         pipe.stop()
-
-    # Get depth sensor's depth scale
-    depth_sensor = profile.get_device().first_depth_sensor()
-    depth_scale = depth_sensor.get_depth_scale()
-    #print("Depth Scale is: ", depth_scale)
-
-    depth_intrin = profile.get_stream(rs.stream.depth).as_video_stream_profile().get_intrinsics()
-    color_intrin = profile.get_stream(rs.stream.color).as_video_stream_profile().get_intrinsics()
-
-    depth_to_color_extrin = profile.get_stream(rs.stream.depth).as_video_stream_profile().get_extrinsics_to(profile.get_stream(rs.stream.color))
-    color_to_depth_extrin = profile.get_stream(rs.stream.color).as_video_stream_profile().get_extrinsics_to(profile.get_stream(rs.stream.depth))
-
-    # Align the streams
-    align = rs.align(rs.stream.color)
-    frameset = align.process(frameset)
-
-    aligned_depth_frame = frameset.get_depth_frame()
-    depth_image = np.asanyarray(aligned_depth_frame.get_data())
-
-    aligned_color_frame = frameset.get_color_frame()
-    color_image = np.asanyarray(aligned_color_frame.get_data())
-
-    # Depth data
-    colorizer = rs.colorizer()
-    colorized_depth = np.asanyarray(colorizer.colorize(depth_frame).get_data())
-
-    colorized_depth = np.asanyarray(colorizer.colorize(aligned_depth_frame).get_data())
+    
     
     list_x = []
     list_y = []
@@ -342,7 +352,7 @@ def find_corners_selmask():
     list_pcd = []
     for i in corners:
         x, y = i.ravel()
-        depth = depth_frame.get_distance(x,y)
+        depth = aligned_depth_frame.get_distance(x,y)
 
         # Project color pixel to depth image and return depth image pixel
         depth_px = rs.rs2_project_color_pixel_to_depth_pixel(
@@ -362,19 +372,43 @@ def find_corners_selmask():
 
         # Some depth image pixels are out of range, run only for postive, non-zero values
         if xd > 0:
-            ddist = depth_frame.get_distance(xd, yd)
-            #print("at ", xd, ",", yd, " depth is ", ddist)
+            ddist = aligned_depth_frame.get_distance(xd, yd)
+            print("at ", xd, ",", yd, " depth is ", ddist)
+
+            pts = [xd-1,yd, xd+1,yd, xd,yd-1, xd,yd+1]
+            nearDist = []
+            for i in range(4):
+                dist = aligned_depth_frame.get_distance(pts[2*i], pts[2*i+1])
+                print("Neighbor point search: ", dist)
+                if dist > 0 and dist < 1:
+                    print("Neighbor point found: ", dist)
+                    nearDist.append(dist)
 
             # Search four closest points if ddist = 0
             if ddist == 0.0:
+                """
                 pts = [xd-1,yd, xd+1,yd, xd,yd-1, xd,yd+1]
                 nearDist = []
                 for i in range(4):
                     dist = depth_frame.get_distance(pts[2*i], pts[2*i+1])
+                    print("Neighbor point search: ", dist)
                     if dist > 0 and dist < 1:
+                        print("Neighbor point found: ", dist)
                         nearDist.append(dist)
+                """
                 
                 if len(nearDist) > 0:
+
+                    # Find points more than 10mm deeper than min and throw away
+                    if len(nearDist) > 1:
+                        diff = max(nearDist) - min(nearDist)
+                        if diff > 0.1:
+                            realVal = min(nearDist)
+                            for i in range(len(nearDist)):
+                                ptDiff = nearDist[i] - min(nearDist)
+                                if ptDiff > 0.1:
+                                    nearDist.remove(i)
+
                     newDdist = sum(nearDist)/len(nearDist)
                     depth_point = rs.rs2_deproject_pixel_to_point(depth_intrin, [xd, yd], newDdist)
 

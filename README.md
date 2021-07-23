@@ -7,6 +7,9 @@
 
         (yourCondaEnv) ~YourGitHubRepo/lacing_vision/src>pip install -e .
         (yourCondaEnv) >python -m compas_rhino.install -p lacing_vision
+        
+        ---for Rhino 7---
+        (yourCondaEnv) >python -m compas_rhino.install -p lacing_vision -v 7.0
 
 2) Create a GH python component with code such as:
 

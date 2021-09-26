@@ -192,7 +192,7 @@ def dynamic_dist(devID, maxDist=0.8, minDist=0.0, width=640, height=480, fps=15)
 
 # =============================================================
 
-def node_adjust(devID, pixlList, maxDist=2, minDist=0.0, width=640, height=480, fps=15):
+def node_adjust(devID, maxDist=2, minDist=0.0, width=640, height=480, fps=15):
     # init values for selection mask
     global jx, jy
     jx = width
@@ -223,6 +223,9 @@ def node_adjust(devID, pixlList, maxDist=2, minDist=0.0, width=640, height=480, 
             fs.align_streams()
 
             get_masked_frameset(fs)
+            wth = int(width/2)
+            hth = int(height/2)
+            pixlList = [[wth-20, hth-20], [wth-20, hth+20], [wth+20, hth-20], [wth+20, hth+20]]
             draw_corners_basic(fs,pixlList)
             # corners = get_corners_selmask(fs)
             #draw_corners(fs, corners)
@@ -365,7 +368,7 @@ def clusterLengths(points):
 
 # =============================================================
 
-def find_corners_selmask(devID, width=640, height=480, fps=30, searchRad=5, maxDist = 3.0, minDist = 0.02):
+def find_corners_selmask(devID, width=640, height=480, fps=15, searchRad=5, maxDist = 1.0, minDist = 0.02):
     # init values for selection mask
     global jx, jy
     jx = width
@@ -494,7 +497,7 @@ class Camera:
             self.rgbsensor.set_option(rs.option.enable_auto_exposure, False)
             self.rgbsensor.set_option(rs.option.exposure, exp_val)
     
-    def update_depth_exp(self, auto=False, exp_val=500):
+    def update_depth_exp(self, auto=False, exp_val=800):
         if auto == True:
             self.dsensor.set_option(rs.option.enable_auto_exposure, True)
         else:
@@ -922,7 +925,7 @@ def fitPlane_multiPt(list_pts):
 #geom_plane(angleMax=95, angleMin=60)
 
 #find_corners_selmask('849312070057')
-find_corners_selmask('048122071136')
+#find_corners_selmask('048122071136')
 #find_corners_selmask('935322071366')
 
 #find_corners('048122071136', 300)    
@@ -934,5 +937,5 @@ find_corners_selmask('048122071136')
 
 #[plane, pix] = find_corners_selmask_pxls('849312070057')
 #time.sleep(1000)
-#node_adjust('849312070057', [[295, 237], [303, 252], [281, 226], [272, 220]])
-#node_adjust('048122071136', [[295, 237], [303, 252], [281, 226], [272, 220]])
+#node_adjust('849312070057', maxDist=2)
+#node_adjust('048122071136', maxDist=2)

@@ -166,7 +166,7 @@ def dynamic_dist(devID, maxDist=0.8, minDist=0.0, width=640, height=480, fps=15)
     for i,xpix in enumerate(range(ix, jx)):
         for j,ypix in enumerate(range(iy, jy)):
             #masked_depths[i][j] = fs.depth_frame.get_distance(xpix,ypix)
-            xy_depth = rs.rs2_project_color_pixel_to_depth_pixel(fs.depth_frame.get_data(), camera.dscale, 0, 4000, camera.dintrin, camera.cintrin, camera.dtoc_extrin, camera.ctod_extrin, [xpix, ypix])
+            xy_depth = rs.rs2_project_color_pixel_to_depth_pixel(fs.depth_frame.get_data(), camera.dscale, 0, 4000, camera.dintrin, camera.cintrin, camera.ctod_extrin, camera.dtoc_extrin, [xpix, ypix])
             xd = int(xy_depth[0])
             yd = int(xy_depth[1])
             masked_depths[i][j] = (xd,yd,fs.depth_frame.get_distance(xd,yd))
@@ -203,6 +203,9 @@ def node_adjust(devID, maxDist=2, minDist=0.0, width=640, height=480, fps=15):
     config = config_camera(devID, width, height, fps)
     profile = pipe.start(config)
 
+    spat_filter = rs.spatial_filter()
+    temp_filter = rs.temporal_filter(0.2, 20, 7)
+
     global camera
     camera = Camera(profile)
 
@@ -221,6 +224,11 @@ def node_adjust(devID, maxDist=2, minDist=0.0, width=640, height=480, fps=15):
         while maskLoop == True:
             fs = Frameset(pipe, 15000)
             fs.align_streams()
+
+            filtered = spat_filter.process(fs.depth_frame)
+            filtered = temp_filter.process(filtered)
+            filt_depth = filtered.as_depth_frame()
+            fs.set_depFrame(filt_depth)
 
             get_masked_frameset(fs)
             wth = int(width/2)
@@ -253,7 +261,7 @@ def node_adjust(devID, maxDist=2, minDist=0.0, width=640, height=480, fps=15):
     masked_depths = np.empty([len(range(ix,jx)), len(range(iy,jy)),3])
     for i,xpix in enumerate(range(ix, jx)):
         for j,ypix in enumerate(range(iy, jy)):
-            xy_depth = rs.rs2_project_color_pixel_to_depth_pixel(fs.depth_frame.get_data(), camera.dscale, 0, 4000, camera.dintrin, camera.cintrin, camera.dtoc_extrin, camera.ctod_extrin, [xpix, ypix])
+            xy_depth = rs.rs2_project_color_pixel_to_depth_pixel(fs.depth_frame.get_data(), camera.dscale, 0, 4000, camera.dintrin, camera.cintrin, camera.ctod_extrin, camera.dtoc_extrin, [xpix, ypix])
             xd = int(xy_depth[0])
             yd = int(xy_depth[1])
             masked_depths[i][j] = (xd,yd,fs.depth_frame.get_distance(xd,yd))
@@ -552,14 +560,16 @@ def draw_rectangle_with_drag(event, x, y, flags, param):
         
         elif event == cv2.EVENT_MBUTTONDOWN:
             exp_vals_rgb = [100, 200, 300, 400, 500, 800, 1000]
-            exp_vals_dep = [300, 500, 800, 1000, 1200, 1500]
+            exp_vals_dep = [100, 200, 300, 500, 800, 1000, 1200, 1500, 2000, 3000, 4000, 5000]
             if 0 <= x < 639 and 0 <= y < 480:
                 camera.update_rgb_exp(False, exp_vals_rgb[exp_iter_rgb])
                 exp_iter_rgb = (exp_iter_rgb + 1) % len(exp_vals_rgb)
+                #print("rgb iter", exp_iter_rgb)
 
             elif 640 <= x < 1279 and 0 <= y < 480:
                 camera.update_depth_exp(False, exp_vals_dep[exp_iter_dep])
                 exp_iter_dep = (exp_iter_dep + 1) % len(exp_vals_dep)
+                #print("depth iter", exp_iter_dep)
 
 # =============================================================
 
@@ -859,9 +869,10 @@ def corners_to_points(camera, frameset, corners, maxDist=1, minDist=0.0, searchR
         x_int = int(x)
         y_int = int(y)
 
-        xy_depth = rs.rs2_project_color_pixel_to_depth_pixel(frameset.depth_frame.get_data(), camera.dscale, 0, 4000, camera.dintrin, camera.cintrin, camera.dtoc_extrin, camera.ctod_extrin, [x_int, y_int])
+        xy_depth = rs.rs2_project_color_pixel_to_depth_pixel(frameset.depth_frame.get_data(), camera.dscale, minDist, maxDist, camera.dintrin, camera.cintrin, camera.ctod_extrin, camera.dtoc_extrin, [x_int, y_int])
         xd = int(xy_depth[0])
         yd = int(xy_depth[1])
+        print("x=", xd, " y=", yd)
 
         depth = frameset.depth_frame.get_distance(xd,yd)
 
@@ -906,7 +917,7 @@ def fitPlane(list_pts):
 
 def fitPlane_multiPt(list_pts):
     # Find best fit plane through points
-    bestPlane = Plane.best_fit(list_pts)
+    bestPlane = Plane.best_fit(list_pts, full_matrices=False)
     planePt = bestPlane.point
     planeVctr = bestPlane.normal
 
@@ -917,7 +928,7 @@ def fitPlane_multiPt(list_pts):
     output = [planePt, planeVctr]
     #print(output)
 
-    # Output formatted as list of points [[planePt], [planeVctr], [[pt1], [pt2], [pt3], [pt4]]] in mm
+    # Output formatted as list [[planePt], [planeVctr]] in mm
     return output
 
 # =============================================================
@@ -937,5 +948,5 @@ def fitPlane_multiPt(list_pts):
 
 #[plane, pix] = find_corners_selmask_pxls('849312070057')
 #time.sleep(1000)
-#node_adjust('849312070057', maxDist=2)
-#node_adjust('048122071136', maxDist=2)
+#node_adjust('849312070057', maxDist=.45, minDist=.25)
+#node_adjust('048122071136', maxDist=.4, minDist=.2)

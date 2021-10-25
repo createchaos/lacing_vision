@@ -1,6 +1,9 @@
 setup.py
 lacing_vision/__init__.py
+lacing_vision/multi_cam_example.py
 lacing_vision/vision.py
+lacing_vision/vision_defs.py
+lacing_vision/vision_deprecated.py
 lacing_vision.egg-info/PKG-INFO
 lacing_vision.egg-info/SOURCES.txt
 lacing_vision.egg-info/dependency_links.txt
